@@ -91,6 +91,7 @@ export function registerContributions(deps: ContributionDeps): vscode.Disposable
       configService,
       adbService,
       iosDebugService,
+      resolveAgPath: refreshAgPath,
       getLogViewPreference,
     }),
   );

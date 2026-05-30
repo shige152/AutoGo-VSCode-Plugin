@@ -8,6 +8,13 @@ import { ensureLogViewVisible } from '../../views/logViewVisibility';
 import { registerConnectCommand } from './connectDevice';
 import { resolveAdbPathForCommand } from '../../adbPathResolver';
 import { DEFAULT_IOS_DEBUG_PORT } from '../../../infra/ios/protocol/messageTypes';
+import { executeCommand } from '../../../utils/processUtils';
+import { normalizeAutoGoRemotePairingAddress } from './autoGoRemotePairing';
+import {
+  parseAdbMdnsPairingServices,
+} from './adbWirelessPairing';
+
+const ADB_PAIRING_SERVICE_WAIT_TIMEOUT_MS = 60_000;
 
 export interface DeviceCommandDeps {
   context: vscode.ExtensionContext;
@@ -15,11 +22,12 @@ export interface DeviceCommandDeps {
   configService: ConfigService;
   adbService: AdbService;
   iosDebugService: IosDebugService;
+  resolveAgPath: () => Promise<string | null>;
   getLogViewPreference: () => 'Panel' | 'View' | 'None';
 }
 
 export function registerDeviceCommands(deps: DeviceCommandDeps): vscode.Disposable[] {
-  const { context, outputChannel, configService, adbService, iosDebugService, getLogViewPreference } = deps;
+  const { context, outputChannel, configService, adbService, iosDebugService, resolveAgPath, getLogViewPreference } = deps;
   const iosDeviceStateKey = 'autogo.selectedIosDevice';
   const disposables: vscode.Disposable[] = [];
   const logActionState = (state: 'start' | 'success' | 'failure'): void => {
@@ -46,18 +54,16 @@ export function registerDeviceCommands(deps: DeviceCommandDeps): vscode.Disposab
         return;
       }
 
-      // Android 平台使用 ADB 连接
+      // Android 平台使用 ADB 设备列表；AutoGo 远程调试配对码可独立使用 AG connect。
       const adbPath = await resolveAdbPathForCommand(configService, outputChannel);
-      if (!adbPath) {
-        return;
-      }
-      const devices = await adbService.getDevices(adbPath);
-
       const quickPickItems: string[] = ['远程调试'];
-      if (devices.length > 0) {
-        devices.forEach((device: string) => {
-          quickPickItems.push(device);
-        });
+      if (adbPath) {
+        const devices = await adbService.getDevices(adbPath);
+        if (devices.length > 0) {
+          devices.forEach((device: string) => {
+            quickPickItems.push(device);
+          });
+        }
       }
 
       const selectedOption = await vscode.window.showQuickPick(quickPickItems, {
@@ -69,7 +75,13 @@ export function registerDeviceCommands(deps: DeviceCommandDeps): vscode.Disposab
       }
 
       if (selectedOption === '远程调试') {
-         await connectWireless(outputChannel, configService, adbPath);
+         await connectWireless(
+           outputChannel,
+           configService,
+           resolveAgPath,
+           () => resolveAdbPathForCommand(configService, outputChannel),
+           adbPath
+         );
       } else {
         const selectedDevice = selectedOption;
 
@@ -142,13 +154,15 @@ export function registerDeviceCommands(deps: DeviceCommandDeps): vscode.Disposab
 async function connectWireless(
   outputChannel: OutputChannel,
   configService: ConfigService,
-  adbPath: string
+  resolveAgPath: () => Promise<string | null>,
+  resolveAdbPath: () => Promise<string | null>,
+  initialAdbPath?: string | null
 ): Promise<void> {
   const connectMethods = ['IP地址和端口', 'AutoGo远程调试配对码', '无线调试配对码 (Android 11+)'];
   const debugMode = configService.debugMode;
 
   const selectedMethod = await vscode.window.showQuickPick(connectMethods, {
-    placeHolder: '请选择连接方式',
+    placeHolder: '请选择连接或配对方式',
   });
 
   if (!selectedMethod) {
@@ -156,13 +170,12 @@ async function connectWireless(
   }
 
   let connectionString = '';
-  let isUsingPairingCode = false;
-  let pairingCodeInput: string | undefined;
+  let adbPath = initialAdbPath ?? null;
 
   if (selectedMethod === 'IP地址和端口') {
     const ipAddress = await vscode.window.showInputBox({
       placeHolder: '192.168.1.100:5555',
-      prompt: '请输入设备IP地址和端口（格式：IP:端口）',
+      prompt: '请输入设备 IP 地址和连接端口（格式：IP:端口）',
     });
     if (!ipAddress) {
       return;
@@ -172,43 +185,24 @@ async function connectWireless(
       return;
     }
     connectionString = ipAddress;
-    isUsingPairingCode = false;
   } else if (selectedMethod === 'AutoGo远程调试配对码') {
     const pairingCode = await vscode.window.showInputBox({
-      placeHolder: '12345',
-      prompt: '请输入AutoGo服务配对码',
+      placeHolder: '19790 或 api.autogo.cc:19790',
+      prompt: '请输入 AutoGo 服务配对码，或完整连接地址',
     });
     if (!pairingCode) {
       return;
     }
-    if (!/^\d{5}$/.test(pairingCode)) {
-      outputChannel.error('无效的配对码格式，请输入5位数字');
+    const remoteAddress = normalizeAutoGoRemotePairingAddress(pairingCode);
+    if (!remoteAddress) {
+      outputChannel.error('无效的配对码格式，请输入 5 位数字或完整连接地址（host:端口）');
       return;
     }
-    connectionString = `api.autogo.cc:${pairingCode}`;
-    isUsingPairingCode = false;
+    await connectAutoGoRemotePairing(remoteAddress, outputChannel, configService, resolveAgPath);
+    return;
   } else if (selectedMethod === '无线调试配对码 (Android 11+)') {
-    const pairAddress = await vscode.window.showInputBox({
-      placeHolder: '例如: 192.168.1.100:37000',
-      prompt: '请输入设备上显示的IP地址和配对端口',
-    });
-    if (!pairAddress || !pairAddress.includes(':')) {
-      outputChannel.error('无效的配对地址格式，请确保包含IP和端口 (例如: 192.168.1.100:37000)');
-      return;
-    }
-
-    const pairingCodeInputResult = await vscode.window.showInputBox({
-      placeHolder: '123456',
-      prompt: '请输入设备上显示的无线调试配对码',
-    });
-    if (!pairingCodeInputResult || !/^\d{5,6}$/.test(pairingCodeInputResult)) {
-      outputChannel.error('无效的配对码格式，请输入5或6位数字。');
-      return;
-    }
-    pairingCodeInput = pairingCodeInputResult;
-
-    isUsingPairingCode = true;
-    connectionString = pairAddress;
+    await connectAndroidWirelessPairing(outputChannel, resolveAdbPath, adbPath, debugMode);
+    return;
   } else {
     return;
   }
@@ -216,68 +210,12 @@ async function connectWireless(
   try {
     outputChannel.success('开始连接');
 
-    if (isUsingPairingCode) {
-      if (!pairingCodeInput) {
-        outputChannel.error('内部错误：配对码未定义但需要执行配对。');
+    if (!adbPath) {
+      adbPath = await resolveAdbPath();
+      if (!adbPath) {
         outputChannel.error('连接失败');
         return;
       }
-      const pairArgs = ['pair', connectionString, pairingCodeInput];
-
-      const pairProcess = child_process.spawn(`\"${adbPath}\"`, pairArgs, { shell: true });
-
-      let pairOutput = '';
-      let pairErrorOutput = '';
-
-      pairProcess.stdout.on('data', (data) => {
-        const dataStr = data.toString();
-        outputChannel.appendRaw(dataStr);
-        pairOutput += dataStr.trim();
-      });
-      pairProcess.stderr.on('data', (data) => {
-        const dataStr = data.toString();
-        outputChannel.appendRaw(dataStr);
-        pairErrorOutput += dataStr.trim();
-      });
-
-      const pairSuccess = await new Promise<boolean>((resolve) => {
-        pairProcess.on('close', (code) => {
-          if (pairOutput.toLowerCase().includes('successfully paired')) {
-            resolve(true);
-          } else {
-            const failureMsg = pairErrorOutput || pairOutput || `配对命令执行失败，退出码: ${code}`;
-            outputChannel.error(`配对失败: ${failureMsg}`);
-            resolve(false);
-          }
-        });
-        pairProcess.on('error', (err) => {
-          outputChannel.error(`启动 adb pair 命令失败: ${err.message}`);
-          resolve(false);
-        });
-      });
-
-      if (!pairSuccess) {
-        outputChannel.error('连接失败');
-        return;
-      }
-
-      const ipOnly = connectionString.split(':')[0];
-      const connectPort = await vscode.window.showInputBox({
-        placeHolder: '5555',
-        prompt: `配对成功！请输入 ${ipOnly} 的连接端口 (无线调试端口，例如 5555)`,
-        value: '5555',
-      });
-
-      if (!connectPort) {
-        return;
-      }
-
-      if (!/^\d+$/.test(connectPort)) {
-        outputChannel.error('无效的连接端口号。');
-        outputChannel.error('连接失败');
-        return;
-      }
-      connectionString = `${ipOnly}:${connectPort}`;
     }
 
     if (!connectionString) {
@@ -298,6 +236,275 @@ async function connectWireless(
     outputChannel.error(errorMsg);
     outputChannel.error('连接失败');
   }
+}
+
+async function connectAndroidWirelessPairing(
+  outputChannel: OutputChannel,
+  resolveAdbPath: () => Promise<string | null>,
+  initialAdbPath: string | null,
+  debugMode: boolean
+): Promise<void> {
+  const adbPath = initialAdbPath ?? await resolveAdbPath();
+  if (!adbPath) {
+    outputChannel.error('连接失败');
+    return;
+  }
+
+  outputChannel.success('开始连接');
+  outputChannel.info('正在等待无线调试配对服务（在设备上打开“无线调试 > 使用配对码配对设备”）');
+
+  const pairingAddressResult = await waitForAdbPairingAddress(adbPath, outputChannel, debugMode);
+  if (pairingAddressResult.status === 'cancelled') {
+    outputChannel.success('已取消连接');
+    return;
+  }
+  if (pairingAddressResult.status === 'timeout') {
+    outputChannel.error('等待无线调试配对服务超时（确认设备已打开“无线调试 > 使用配对码配对设备”后重试。）');
+    outputChannel.error('连接失败');
+    return;
+  }
+  const pairingAddress = pairingAddressResult.address;
+
+  const pairingCode = await vscode.window.showInputBox({
+    placeHolder: '123456',
+    prompt: `请输入设备上显示的无线调试配对码（配对地址：${pairingAddress}）`,
+  });
+  if (!pairingCode) {
+    outputChannel.success('已取消连接');
+    return;
+  }
+  if (!/^\d{5,6}$/.test(pairingCode)) {
+    outputChannel.error('无效的配对码格式，请输入5或6位数字。');
+    outputChannel.error('连接失败');
+    return;
+  }
+
+  const pairSuccess = await runAdbPair(adbPath, pairingAddress, pairingCode, outputChannel, debugMode);
+  if (!pairSuccess) {
+    outputChannel.error('连接失败');
+    return;
+  }
+
+  outputChannel.info('如果设备列表没有显示该无线设备，在设备上重新开关“无线调试”后等待设备自动连接。');
+  outputChannel.success('连接结束');
+}
+
+async function waitForAdbPairingAddress(
+  adbPath: string,
+  outputChannel: OutputChannel,
+  debugMode: boolean
+): Promise<
+  | { status: 'found'; address: string }
+  | { status: 'cancelled' }
+  | { status: 'timeout' }
+> {
+  if (debugMode) {
+    outputChannel.log('正在等待无线调试配对服务...');
+  }
+
+  return vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: '正在等待无线调试配对服务',
+      cancellable: true,
+    },
+    async (progress, token) => {
+      progress.report({ message: '请在设备上打开“无线调试 > 使用配对码配对设备”' });
+      const deadline = Date.now() + ADB_PAIRING_SERVICE_WAIT_TIMEOUT_MS;
+
+      while (!token.isCancellationRequested && Date.now() < deadline) {
+        const remainingMs = deadline - Date.now();
+        const discoveredPairingAddresses = await discoverAdbPairingAddresses(
+          adbPath,
+          outputChannel,
+          debugMode,
+          token,
+          remainingMs
+        );
+        if (discoveredPairingAddresses.length > 0) {
+          const pairingAddress = discoveredPairingAddresses[0];
+          if (debugMode) {
+            outputChannel.log(`已发现无线调试配对服务: ${pairingAddress}`);
+          }
+          return { status: 'found', address: pairingAddress };
+        }
+
+        const nextRemainingMs = deadline - Date.now();
+        if (nextRemainingMs > 0) {
+          await delay(Math.min(1000, nextRemainingMs), token);
+        }
+      }
+
+      return token.isCancellationRequested ? { status: 'cancelled' } : { status: 'timeout' };
+    }
+  );
+}
+
+async function discoverAdbPairingAddresses(
+  adbPath: string,
+  outputChannel: OutputChannel,
+  debugMode: boolean,
+  token?: vscode.CancellationToken,
+  timeoutMs?: number
+): Promise<string[]> {
+  return new Promise<string[]>((resolve) => {
+    if (token?.isCancellationRequested) {
+      resolve([]);
+      return;
+    }
+
+    const mdnsProcess = child_process.spawn(adbPath, ['mdns', 'services'], { shell: false });
+    let outputData = '';
+    let errorData = '';
+    let settled = false;
+    let cancellationDisposable: vscode.Disposable | undefined;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const finish = (addresses: string[]) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cancellationDisposable?.dispose();
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+      resolve(addresses);
+    };
+    cancellationDisposable = token?.onCancellationRequested(() => {
+      mdnsProcess.kill();
+      finish([]);
+    });
+    if (typeof timeoutMs === 'number' && timeoutMs > 0) {
+      timeout = setTimeout(() => {
+        mdnsProcess.kill();
+        finish([]);
+      }, timeoutMs);
+    }
+
+    mdnsProcess.stdout.on('data', (data) => {
+      outputData += data.toString();
+    });
+
+    mdnsProcess.stderr.on('data', (data) => {
+      errorData += data.toString();
+    });
+
+    mdnsProcess.on('close', () => {
+      if (settled) {
+        return;
+      }
+      if (debugMode && errorData.trim()) {
+        outputChannel.warn(`发现无线调试配对服务时出现警告: ${errorData.trim()}`);
+      }
+      finish(token?.isCancellationRequested ? [] : parseAdbMdnsPairingServices(outputData));
+    });
+
+    mdnsProcess.on('error', (err) => {
+      if (settled) {
+        return;
+      }
+      if (debugMode) {
+        outputChannel.warn(`启动 adb mdns services 命令失败: ${err.message}`);
+      }
+      finish([]);
+    });
+  });
+}
+
+function delay(ms: number, token: vscode.CancellationToken): Promise<void> {
+  return new Promise((resolve) => {
+    if (token.isCancellationRequested) {
+      resolve();
+      return;
+    }
+
+    let settled = false;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    let disposable: vscode.Disposable | undefined;
+    const finish = () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+      if (disposable) {
+        disposable.dispose();
+      }
+      resolve();
+    };
+
+    timeout = setTimeout(finish, ms);
+    disposable = token.onCancellationRequested(finish);
+  });
+}
+
+async function runAdbPair(
+  adbPath: string,
+  pairingAddress: string,
+  pairingCode: string,
+  outputChannel: OutputChannel,
+  debugMode: boolean
+): Promise<boolean> {
+  if (debugMode) {
+    outputChannel.log(`执行配对命令: "${adbPath}" pair ${pairingAddress} ${pairingCode}`);
+  }
+
+  return new Promise<boolean>((resolve) => {
+    const pairProcess = child_process.spawn(adbPath, ['pair', pairingAddress, pairingCode], { shell: false });
+    let outputData = '';
+    let errorData = '';
+
+    pairProcess.stdout.on('data', (data) => {
+      const dataStr = data.toString();
+      outputChannel.appendRaw(dataStr);
+      outputData += dataStr;
+    });
+
+    pairProcess.stderr.on('data', (data) => {
+      const dataStr = data.toString();
+      outputChannel.appendRaw(dataStr);
+      errorData += dataStr;
+    });
+
+    pairProcess.on('close', (code) => {
+      const combinedOutput = `${outputData}\n${errorData}`;
+      if (code === 0 && combinedOutput.toLowerCase().includes('successfully paired')) {
+        resolve(true);
+        return;
+      }
+
+      if (!outputData.trim() && !errorData.trim()) {
+        outputChannel.error(`配对命令执行失败，退出码: ${code}`);
+      }
+      resolve(false);
+    });
+
+    pairProcess.on('error', (err) => {
+      outputChannel.error(`启动 adb pair 命令失败: ${err.message}`);
+      resolve(false);
+    });
+  });
+}
+
+async function connectAutoGoRemotePairing(
+  remoteAddress: string,
+  outputChannel: OutputChannel,
+  configService: ConfigService,
+  resolveAgPath: () => Promise<string | null>
+): Promise<void> {
+  const agPath = await resolveAgPath();
+  if (!agPath) {
+    return;
+  }
+
+  outputChannel.success('开始连接');
+  await executeCommand(agPath, ['connect', remoteAddress], outputChannel, {
+    debugMode: configService.debugMode,
+    commandDisplayName: 'AutoGo远程调试配对',
+    configService,
+  });
 }
 
 async function attemptAdbConnection(
