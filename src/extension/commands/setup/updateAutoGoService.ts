@@ -6,6 +6,7 @@ import * as http from 'http';
 import { URL } from 'url';
 import { OutputChannel } from '../../../services/outputChannel';
 import { ConfigService } from '../../../services/configService';
+import { createAdbPathInjectedEnv } from '../../../utils/adbPathEnv';
 
 const MAX_REDIRECTS = 5;
 
@@ -28,7 +29,10 @@ export class UpdateAutoGoService {
     }
 
     try {
-      const result = child_process.spawnSync(agPath, ['version'], { encoding: 'utf8' });
+      const result = child_process.spawnSync(agPath, ['version'], {
+        encoding: 'utf8',
+        env: createAdbPathInjectedEnv(this.configService.adbPath).env,
+      });
       if (result.status !== 0) {
         return null;
       }
@@ -326,6 +330,7 @@ export class UpdateAutoGoService {
       const result = child_process.spawnSync(agPath, ['init', '-t', targetPlatform], {
         cwd,
         encoding: 'utf8',
+        env: createAdbPathInjectedEnv(this.configService.adbPath).env,
       });
 
       if (this.configService.debugMode && result.status !== 0) {

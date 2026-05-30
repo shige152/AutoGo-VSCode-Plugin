@@ -1,10 +1,10 @@
 import * as child_process from 'child_process';
 import { OutputChannel } from '../services/outputChannel';
 import * as vscode from 'vscode';
-import * as path from 'path';
 import * as os from 'os';
 import * as fs from 'fs';
 import { ConfigService } from '../services/configService';
+import { type AdbPathEnvResult, createAdbPathInjectedEnv, isAgExecutableCommand } from './adbPathEnv';
 
 // 日志级别枚举
 export enum LogLevel {
@@ -28,35 +28,6 @@ export interface ProcessOutputOptions {
     configService?: ConfigService;
     silent?: boolean; // If true, suppress stdout/stderr output
 }
-
-function getEnvPathKey(env: NodeJS.ProcessEnv): string {
-    for (const key of Object.keys(env)) {
-        if (key.toLowerCase() === 'path') {
-            return key;
-        }
-    }
-    return 'PATH';
-}
-
-function normalizePathEntry(value: string): string {
-    const trimmed = value.trim().replace(/^"(.*)"$/, '$1');
-    if (!trimmed) {
-        return '';
-    }
-    return trimmed.replace(/[\/]+$/, '').toLowerCase();
-}
-
-function hasAdbBinary(dir: string, adbExeName: string): boolean {
-    if (!dir) {
-        return false;
-    }
-    try {
-        return fs.existsSync(path.join(dir, adbExeName));
-    } catch {
-        return false;
-    }
-}
-
 
 // 默认配置
 const defaultOptions: ProcessOutputOptions = {
@@ -176,70 +147,26 @@ export async function executeCommand(
         }
     }
 
+    const isAgCommand = isAgExecutableCommand(command);
+    const adbEnvResult: AdbPathEnvResult = isAgCommand
+        ? createAdbPathInjectedEnv(configService?.adbPath, process.env)
+        : { env: { ...process.env }, injected: false };
+
     let spawnOptions: child_process.SpawnOptionsWithoutStdio = {
         cwd: config.cwd,
         shell: config.shell,
-        env: { ...process.env } // Start with a copy
+        env: adbEnvResult.env
     };
 
     // --- V V V 临时修改 PATH 环境变量 V V V ---
-    const lowerCaseCommand = command.toLowerCase();
-    const isAgCommand = lowerCaseCommand.endsWith('ag.exe') || lowerCaseCommand.endsWith('ag'); // Check both .exe and no extension
-    const configuredAdbPath = configService?.adbPath;
-
-    if (isAgCommand && configService && configuredAdbPath && configuredAdbPath !== 'adb') {
-        try {
-            const adbDir = path.dirname(configuredAdbPath);
-            // 检查目录是否存在
-            if (fs.existsSync(adbDir)) {
-                const envPathKey = spawnOptions.env ? getEnvPathKey(spawnOptions.env) : 'PATH';
-                const currentPath = spawnOptions.env?.[envPathKey] || '';
-                const separator = os.platform() === 'win32' ? ';' : ':';
-                const adbExeName = path.basename(configuredAdbPath);
-                const adbDirNormalized = normalizePathEntry(adbDir);
-                const pathEntries = currentPath.split(separator);
-                const filteredEntries: string[] = [];
-
-                for (const entry of pathEntries) {
-                    const trimmed = entry.trim();
-                    if (!trimmed) {
-                        continue;
-                    }
-                    const entryValue = trimmed.replace(/^"(.*)"$/, '$1');
-                    const entryNormalized = normalizePathEntry(entryValue);
-                    if (!entryNormalized) {
-                        continue;
-                    }
-                    if (entryNormalized === adbDirNormalized) {
-                        continue;
-                    }
-                    if (hasAdbBinary(entryValue, adbExeName)) {
-                        continue;
-                    }
-                    filteredEntries.push(trimmed);
-                }
-
-                const newPathEntries = [adbDir, ...filteredEntries];
-                const newPath = newPathEntries.join(separator);
-
-                // 确保 env 对象存在再赋值
-                if (spawnOptions.env) {
-                    spawnOptions.env[envPathKey] = newPath;
-                    if (debugMode) {
-                        outputChannel.log(`[Debug] Temporarily prepending ADB directory to PATH: ${adbDir}`);
-                    }
-                } else if (debugMode) {
-                    outputChannel.warn('[Debug] Failed to access spawnOptions.env to modify PATH.');
-                }
-            } else {
-                if (debugMode) {
-                    outputChannel.warn(`[Debug] Configured ADB directory does not exist: ${adbDir}. Not modifying PATH.`);
-                }
-            }
-        } catch (pathError) {
-            if (debugMode) {
-                outputChannel.warn(`[Debug] Error processing configured ADB path for PATH modification: ${pathError instanceof Error ? pathError.message : String(pathError)}`);
-            }
+    if (isAgCommand && configService && debugMode) {
+        if (adbEnvResult.injected) {
+            outputChannel.log(`[Debug] Temporarily prepending ADB directory to PATH: ${adbEnvResult.adbDir}`);
+        } else if (adbEnvResult.reason === 'missing-adb-dir') {
+            outputChannel.warn(`[Debug] Configured ADB directory does not exist: ${adbEnvResult.adbDir}. Not modifying PATH.`);
+        } else if (adbEnvResult.reason === 'path-processing-error') {
+            const pathError = adbEnvResult.error;
+            outputChannel.warn(`[Debug] Error processing configured ADB path for PATH modification: ${pathError instanceof Error ? pathError.message : String(pathError)}`);
         }
     }
     // --- ^ ^ ^ 临时修改 PATH 环境变量 ^ ^ ^ ---

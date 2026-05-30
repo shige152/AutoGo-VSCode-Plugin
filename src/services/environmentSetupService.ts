@@ -9,6 +9,7 @@ import { ensureLogViewVisible } from '../extension/views/logViewVisibility'; // 
 import { Downloader } from '../app/ports/downloader';
 import { FileSystem } from '../app/ports/fileSystem';
 import { ZipExtractor } from '../app/ports/zipExtractor';
+import { createAdbPathInjectedEnv } from '../utils/adbPathEnv';
 
 export interface NdkDownloadDeps {
     downloader: Downloader;
@@ -471,8 +472,14 @@ export async function checkAutoGOVersion(agPath: string | null, outputChannel: O
 
         let versionOutput = '';
 
+        const adbEnvResult = createAdbPathInjectedEnv(configService.adbPath);
+        if (debugMode && adbEnvResult.injected) {
+            outputChannel.log(`[Debug] Temporarily prepending ADB directory to PATH: ${adbEnvResult.adbDir}`);
+        }
+
         // 执行版本命令
         const process = require('child_process').spawn(`"${resolvedAgPath}"`, ['version'], {
+            env: adbEnvResult.env,
             shell: true,
             windowsHide: true
         });
