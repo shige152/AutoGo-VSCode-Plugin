@@ -1,11 +1,10 @@
-import * as child_process from 'child_process';
 import * as vscode from 'vscode';
 import { ArtifactStore } from '../../../app/services/artifactStore';
 import { AdbService } from '../../../services/adbService';
 import { ConfigService, CONFIG_SECTION } from '../../../services/configService';
 import { OutputChannel } from '../../../services/outputChannel';
 import { UpdateAutoGoService, VersionInfo } from './updateAutoGoService';
-import { executeCommand, handleProcessOutput, LogLevel } from '../../../utils/processUtils';
+import { executeCommand } from '../../../utils/processUtils';
 import {
   USER_MESSAGES,
   formatDeviceConnectionCheckFailed,
@@ -197,10 +196,10 @@ export function registerSetupCommands(deps: SetupCommandDeps): vscode.Disposable
       }
 
       try {
-        const helpProcess = child_process.spawn(command, [], { shell: true });
-        handleProcessOutput(helpProcess, outputChannel, '帮助信息', {
+        await executeCommand(agPath, ['help'], outputChannel, {
           debugMode: debugMode,
-          minLogLevel: LogLevel.INFO,
+          commandDisplayName: '帮助信息',
+          configService: configService,
         });
       } catch (error) {
         outputChannel.error(USER_MESSAGES.helpFetchFailed);

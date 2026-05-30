@@ -11,9 +11,13 @@ AutoGo VS Code 扩展用于在 VS Code 中完成 AutoGo 项目的初始化、运
 - 推送文件、目录与项目资源到设备
 - 按需下载并管理 ADB / AutoGo 工具链
 
+## 📣本插件正在测试阶段, 欢迎大家测试~
+
+- 如有问题请点击链接加入群聊[【AutoGo-技术交流】：753399754](https://qm.qq.com/q/8uh1RtqsEM)
+- MCP 服务器相关功能已独立到[【https://www.npmjs.com/package/autogo-mcp】](https://www.npmjs.com/package/autogo-mcp)
+
 ## 环境要求
 
-- Node.js 18+
 - VS Code 1.96.2+
 - Go 开发环境（用于 AutoGo 项目开发）
 - Android NDK（如需编译 Android 二进制或 APK）
@@ -54,59 +58,6 @@ AutoGo VS Code 扩展用于在 VS Code 中完成 AutoGo 项目的初始化、运
 - 默认快捷键：
   - `F5`：运行项目
   - `F12`：停止运行
-
-## 开发与构建
-
-### 安装依赖
-
-```bash
-npm ci
-```
-
-### 常用命令
-
-```bash
-npm run lint
-npm run test:unit
-npm run package
-npm run validate
-```
-
-命令说明：
-
-- `npm run lint`：执行 ESLint 检查
-- `npm run test:unit`：编译并运行单元测试
-- `npm run package`：构建扩展产物到 `dist/`
-- `npm run validate`：执行发布前检查（`npm test` + UTF-8 检查 + 打包）
-
-### 多平台打包
-
-- 详见 [`BUILD-MULTIPLATFORM.md`](./BUILD-MULTIPLATFORM.md)
-
-## SDK 更新功能说明
-
-出于开源安全与可维护性考虑，仓库中不再内置私有更新源地址。
-如果需要启用“更新 AutoGo 版本”功能，请在 VS Code 设置中配置以下项：
-
-- `AutoGo.sdkChangelogUrl`：公开可访问的更新日志地址
-- `AutoGo.sdkDownloadBaseUrl`：公开可访问的 SDK 下载基础地址
-
-使用 HTTPS 地址，并由项目维护者在正式发布前统一配置。
-
-## 项目结构
-
-```text
-src/
-  app/            # 应用层用例与端口定义
-  core/           # 纯业务逻辑与工具函数
-  extension/      # VS Code 命令、视图、激活逻辑
-  infra/          # 文件、HTTP、进程、ZIP 等基础设施实现
-  services/       # 配置、日志、环境准备等服务
-  test/           # 单元测试与集成测试
-  webview-ui/     # Webview 前端资源
-scripts/          # 辅助脚本
-.github/          # CI 配置
-```
 
 ## 贡献与安全
 
