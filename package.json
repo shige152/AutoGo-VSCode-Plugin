@@ -2,7 +2,7 @@
   "name": "qq1522355574-autogo",
   "displayName": "AutoGo-Plugin",
   "description": "AutoGo VS Code 扩展，提供项目初始化、运行调试、设备连接与 Android/iOS 编译能力。",
-  "version": "1.2.15",
+  "version": "1.2.16",
   "publisher": "weijinyichu",
   "icon": "AutoGo.png",
   "engines": {
