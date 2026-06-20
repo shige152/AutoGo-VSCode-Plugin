@@ -196,7 +196,8 @@ export class IosDebugService {
    */
   async runBinary(
     host: string,
-    binaryPath: string
+    binaryPath: string,
+    onExit?: (exitCode: number) => void
   ): Promise<boolean> {
     // 1. 推送二进制文件
     const binaryResult = await this.pushFile(host, 'debug', binaryPath);
@@ -216,7 +217,7 @@ export class IosDebugService {
       host,
       'bin',
       (log) => this.forwardDeviceLog(log),
-      () => undefined
+      onExit ?? (() => undefined)
     );
   }
 
