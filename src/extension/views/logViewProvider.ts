@@ -3,6 +3,7 @@ import { getUri } from '../../utils/getUri';
 import { getNonce } from '../../utils/getNonce';
 import { LogWebviewMessageHandler } from '../../services/logWebviewMessageHandler';
 import { getOutputChannel, OutputChannel, LogEntry } from '../../services/outputChannel';
+import { onDidChangeRunCommandState } from '../../services/runCommandState';
 import { LogPanelManager } from './logPanelManager';
 import { updateStatusBar } from '../statusbar/logStatusBar'; // Import the status bar updater
 
@@ -14,6 +15,7 @@ export class LogViewProvider implements vscode.WebviewViewProvider {
     private readonly _extensionUri: vscode.Uri;
     private _messageHandler: LogWebviewMessageHandler;
     private _logSubscription?: vscode.Disposable;
+    private _runCommandStateSubscription?: vscode.Disposable;
     private _isVisible: boolean = false; // Track visibility
 
     constructor(private readonly context: vscode.ExtensionContext) {
@@ -51,9 +53,9 @@ export class LogViewProvider implements vscode.WebviewViewProvider {
         webviewView.webview.html = this._messageHandler.getHtmlContent(webviewView.webview);
 
         // Send initial state (including background mode) to the webview
-        this._messageHandler.postMessage(webviewView.webview, { 
-            command: 'setState', 
-            payload: this._messageHandler.getInitialState() 
+        this._messageHandler.postMessage(webviewView.webview, {
+            command: 'setState',
+            payload: this._messageHandler.getInitialState()
         });
 
         // Subscribe to new logs from the OutputChannel first
@@ -76,6 +78,13 @@ export class LogViewProvider implements vscode.WebviewViewProvider {
              }
         });
 
+        this._runCommandStateSubscription = onDidChangeRunCommandState((running) => {
+            this._messageHandler.postMessage(this._view?.webview, {
+                command: 'setRunState',
+                payload: { running },
+            });
+        });
+
         // When the view becomes visible/hidden
         webviewView.onDidChangeVisibility(() => {
              this._isVisible = this._view?.visible ?? false;
@@ -92,11 +101,11 @@ export class LogViewProvider implements vscode.WebviewViewProvider {
                  }
              }
         });
-        
+
         // Send initial history if already visible when resolved (rare case, but good practice)
         if (this._view.visible) {
             // Also update status bar if initially visible
-            updateStatusBar('View'); 
+            updateStatusBar('View');
             this.sendFullHistory(outputChannel);
         }
 
@@ -108,6 +117,8 @@ export class LogViewProvider implements vscode.WebviewViewProvider {
             this._isVisible = false;
             this._logSubscription?.dispose();
             this._logSubscription = undefined;
+            this._runCommandStateSubscription?.dispose();
+            this._runCommandStateSubscription = undefined;
             this._view = undefined;
         }, null, this.context.subscriptions);
 
@@ -144,9 +155,9 @@ export class LogViewProvider implements vscode.WebviewViewProvider {
     public isViewVisible(): boolean {
         return this._isVisible;
     }
-    
+
     // Static method to check if *any* LogView provided by this class is visible
     public static isAnyViewVisible(): boolean {
         return !!LogViewProvider.currentViewProvider?._isVisible;
     }
-} 
+}

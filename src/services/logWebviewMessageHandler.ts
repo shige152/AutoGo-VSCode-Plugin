@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import { getNonce } from '../utils/getNonce'; // Utility for nonce
 import { getUri } from '../utils/getUri';     // Utility for webview URIs
 import { getOutputChannel } from './outputChannel'; // 添加import
+import { getRunCommandRunning } from './runCommandState';
 
 // Keep the file path regex here or move to utils
 const filePathRegex = /((?:[a-zA-Z]:\\|\/)?(?:[^<>:"\\|?*\n\r]+[\\\/])*)([^<>:"\\|?*\n\r]+\.\w+):(\d+)/g;
@@ -31,7 +32,7 @@ export class LogWebviewMessageHandler implements vscode.Disposable {
         this._extensionUri = context.extensionUri;
         this._context = context; // Store context
         // Load initial background mode from global state, default to gradient
-        this._backgroundMode = context.globalState.get('autogo.logBackgroundMode', 'gradient'); 
+        this._backgroundMode = context.globalState.get('autogo.logBackgroundMode', 'gradient');
     }
 
     private debugLog(...args: unknown[]): void {
@@ -111,11 +112,11 @@ export class LogWebviewMessageHandler implements vscode.Disposable {
                 htmlPageContent = htmlPageContent.replace(/\${codiconUri}/g, codiconUri.toString());
                 htmlPageContent = htmlPageContent.replace(/\${scriptUri}/g, scriptUri.toString());
                 htmlPageContent = this.ensureDebCompileOption(htmlPageContent);
-                
+
                 this.debugLog(`[LogWebviewMessageHandler] HTML content processed and placeholders replaced.`);
-                
+
                 // 添加调试日志，查看替换后的HTML头部内容
-                this.debugLog(`[LogWebviewMessageHandler] HTML head after replacement:`, 
+                this.debugLog(`[LogWebviewMessageHandler] HTML head after replacement:`,
                     htmlPageContent.substring(0, htmlPageContent.indexOf('</head>')));
             } else {
                 console.error(`[LogWebviewMessageHandler] ERROR: fs.existsSync returned false. The file at "${absoluteHtmlPath}" is reported as NOT FOUND by Node.js.`);
@@ -162,7 +163,7 @@ export class LogWebviewMessageHandler implements vscode.Disposable {
         } catch (e: any) {
             console.error(`[LogWebviewMessageHandler] UNEXPECTED_ERROR_IN_TRY_BLOCK: ${e.message}`, e.stack);
             // Now absoluteHtmlPath is accessible here if it was assigned in try block
-            if (absoluteHtmlPath && e.path === absoluteHtmlPath) { 
+            if (absoluteHtmlPath && e.path === absoluteHtmlPath) {
                  console.error(`[LogWebviewMessageHandler] The error path matches the target HTML path. This was likely the fs.readFileSync failure for output.html.`);
             }
             vscode.window.showErrorMessage('无法加载 AutoGo 日志视图内容 (Unexpected error).');
@@ -359,13 +360,13 @@ export class LogWebviewMessageHandler implements vscode.Disposable {
     }
 
     /** Gets the initial state to send to the webview */
-    public getInitialState(): { backgroundMode: string; targetPlatform: 'android' | 'ios' } {
+    public getInitialState(): { backgroundMode: string; targetPlatform: 'android' | 'ios'; runCommandRunning: boolean } {
         // 读取最新的状态，而不是构造函数里的初始值
         const currentMode = this._context.globalState.get('autogo.logBackgroundMode', 'gradient');
         this._backgroundMode = currentMode; // 更新内部状态以防万一
         // 读取 targetPlatform 配置
         const targetPlatform = vscode.workspace.getConfiguration('AutoGo').get<'android' | 'ios'>('targetPlatform', 'android');
-        return { backgroundMode: currentMode, targetPlatform };
+        return { backgroundMode: currentMode, targetPlatform, runCommandRunning: getRunCommandRunning() };
     }
 
     public dispose(): void {
