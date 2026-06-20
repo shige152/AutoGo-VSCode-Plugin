@@ -156,8 +156,7 @@ export function registerRunCommands(deps: RunCommandDeps): vscode.Disposable[] {
 
             // iOS 平台使用 TCP 协议
             if (configService.targetPlatform === 'ios') {
-                await runOnIosDevice();
-                return;
+                return await runOnIosDevice();
             }
 
             // Android 平台使用原有逻辑
