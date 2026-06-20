@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { LogWebviewMessageHandler } from '../../services/logWebviewMessageHandler';
 import { getOutputChannel, OutputChannel, LogEntry } from '../../services/outputChannel';
+import { onDidChangeRunCommandState } from '../../services/runCommandState';
 import { updateStatusBar } from '../statusbar/logStatusBar';
 import { LogViewProvider } from './logViewProvider';
 
@@ -17,6 +18,7 @@ export class LogPanelManager {
     private _disposables: vscode.Disposable[] = [];
     private _messageHandler: LogWebviewMessageHandler;
     private _logSubscription?: vscode.Disposable;
+    private _runCommandStateSubscription?: vscode.Disposable;
 
     private constructor(panel: vscode.WebviewPanel, context: vscode.ExtensionContext) {
         this._panel = panel;
@@ -25,12 +27,12 @@ export class LogPanelManager {
 
         // Set the webview's initial html content
         this._panel.webview.html = this._messageHandler.getHtmlContent(this._panel.webview);
-        
+
         // Send initial state (including background mode) to the webview
         // Do this soon after setting HTML, before the webview fully initializes its JS if possible
-        this._messageHandler.postMessage(this._panel.webview, { 
-            command: 'setState', 
-            payload: this._messageHandler.getInitialState() 
+        this._messageHandler.postMessage(this._panel.webview, {
+            command: 'setState',
+            payload: this._messageHandler.getInitialState()
         });
 
         // Listen for when the panel is disposed
@@ -63,10 +65,18 @@ export class LogPanelManager {
             this._messageHandler.postMessage(this._panel.webview, { command: 'addLog', htmlContent });
         });
         this._disposables.push(this._logSubscription);
-        
+
+        this._runCommandStateSubscription = onDidChangeRunCommandState((running) => {
+            this._messageHandler.postMessage(this._panel.webview, {
+                command: 'setRunState',
+                payload: { running },
+            });
+        });
+        this._disposables.push(this._runCommandStateSubscription);
+
         // Send full history initially
         this.sendFullHistory(outputChannel);
-        
+
         // Inform the webview it's ready
         setTimeout(() => {
              this._messageHandler.postMessage(this._panel.webview, { command: 'webviewIsReady' });
@@ -87,6 +97,7 @@ export class LogPanelManager {
         // Clean up our resources
         this._panel.dispose();
         this._logSubscription?.dispose();
+        this._runCommandStateSubscription?.dispose();
         this._messageHandler.dispose(); // Dispose the handler too
 
         while (this._disposables.length) {
@@ -131,4 +142,4 @@ export class LogPanelManager {
         LogPanelManager.currentPanel = new LogPanelManager(panel, context);
         updateStatusBar('Panel'); // Update status bar when panel is successfully created
     }
-} 
+}

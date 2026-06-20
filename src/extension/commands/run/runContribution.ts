@@ -8,6 +8,7 @@ import { IosDebugService } from '../../../services/iosDebugService';
 import { ConfigService, CONFIG_SECTION } from '../../../services/configService';
 import { NdkDownloadDeps } from '../../../services/environmentSetupService';
 import { OutputChannel } from '../../../services/outputChannel';
+import { getRunCommandRunning, setRunCommandRunning } from '../../../services/runCommandState';
 import { executeCommand } from '../../../utils/processUtils';
 import {
     USER_MESSAGES,
@@ -128,8 +129,25 @@ export function registerRunCommands(deps: RunCommandDeps): vscode.Disposable[] {
         return selected.host;
     };
 
+    const withRunCommandLock = (
+        handler: (...args: unknown[]) => Promise<void>
+    ): ((...args: unknown[]) => Promise<void>) => {
+        return async (...args) => {
+            if (getRunCommandRunning()) {
+                return;
+            }
+
+            setRunCommandRunning(true);
+            try {
+                await handler(...args);
+            } finally {
+                setRunCommandRunning(false);
+            }
+        };
+    };
+
     disposables.push(
-        registerRunCommand(async (...args) => {
+        registerRunCommand(withRunCommandLock(async (...args) => {
             ensureLogViewVisible(context, getLogViewPreference());
 
             // iOS 平台使用 TCP 协议
@@ -272,7 +290,7 @@ export function registerRunCommands(deps: RunCommandDeps): vscode.Disposable[] {
                     logActionState('运行', 'failure');
                 }
             }
-        }),
+        })),
         registerStopCommand(async () => {
             ensureLogViewVisible(context, getLogViewPreference());
 

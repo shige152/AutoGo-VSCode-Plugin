@@ -20,7 +20,7 @@ AutoGo VS Code 扩展用于在 VS Code 中完成 AutoGo 项目的初始化、运
 
 - VS Code 1.96.2+
 - Go 开发环境（用于 AutoGo 项目开发）
-- Android NDK（如需编译 Android 二进制或 APK）
+- Android NDK（编译 Android 二进制或 APK）
 
 ## 安装方式
 
