@@ -59,6 +59,7 @@ export function registerRunCommands(deps: RunCommandDeps): vscode.Disposable[] {
 
     const disposables: vscode.Disposable[] = [];
     const iosDeviceStateKey = 'autogo.selectedIosDevice';
+    type RunCommandLockResult = 'keep-running' | void;
     const logIosFlow = (
         message: string,
         level: 'log' | 'success' | 'warn' | 'error' = 'log'
@@ -130,7 +131,7 @@ export function registerRunCommands(deps: RunCommandDeps): vscode.Disposable[] {
     };
 
     const withRunCommandLock = (
-        handler: (...args: unknown[]) => Promise<void>
+        handler: (...args: unknown[]) => Promise<RunCommandLockResult>
     ): ((...args: unknown[]) => Promise<void>) => {
         return async (...args) => {
             if (getRunCommandRunning()) {
@@ -138,10 +139,13 @@ export function registerRunCommands(deps: RunCommandDeps): vscode.Disposable[] {
             }
 
             setRunCommandRunning(true);
+            let keepRunState = false;
             try {
-                await handler(...args);
+                keepRunState = await handler(...args) === 'keep-running';
             } finally {
-                setRunCommandRunning(false);
+                if (!keepRunState) {
+                    setRunCommandRunning(false);
+                }
             }
         };
     };
@@ -152,8 +156,7 @@ export function registerRunCommands(deps: RunCommandDeps): vscode.Disposable[] {
 
             // iOS 平台使用 TCP 协议
             if (configService.targetPlatform === 'ios') {
-                await runOnIosDevice();
-                return;
+                return await runOnIosDevice();
             }
 
             // Android 平台使用原有逻辑
@@ -239,7 +242,7 @@ export function registerRunCommands(deps: RunCommandDeps): vscode.Disposable[] {
                 }
             }
 
-            async function runOnIosDevice(): Promise<void> {
+            async function runOnIosDevice(): Promise<RunCommandLockResult> {
                 const selectedHost = await selectIosDevice('选择要运行的 iOS 设备');
                 if (!selectedHost) {
                     return;
@@ -283,12 +286,19 @@ export function registerRunCommands(deps: RunCommandDeps): vscode.Disposable[] {
                     return;
                 }
 
-                const success = await iosDebugService.runBinary(selectedHost, binaryPath);
+                const success = await iosDebugService.runBinary(
+                    selectedHost,
+                    binaryPath,
+                    () => {
+                        logActionState('运行', 'success');
+                        setRunCommandRunning(false);
+                    }
+                );
                 if (success) {
-                    logActionState('运行', 'success');
-                } else {
-                    logActionState('运行', 'failure');
+                    return 'keep-running';
                 }
+
+                logActionState('运行', 'failure');
             }
         })),
         registerStopCommand(async () => {
@@ -383,6 +393,7 @@ export function registerRunCommands(deps: RunCommandDeps): vscode.Disposable[] {
                 try {
                     logActionState('停止', 'start');
                     iosDebugService.stopScript(selectedHost);
+                    setRunCommandRunning(false);
                     logActionState('停止', 'success');
                 } catch (error) {
                     logActionState('停止', 'failure');
