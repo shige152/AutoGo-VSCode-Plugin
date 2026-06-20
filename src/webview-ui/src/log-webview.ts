@@ -59,6 +59,7 @@ debugLog("[Webview] Find widget elements:", {
 // --- State Variables --- (Keep track of UI state)
 let isScrollLocked = false;
 let backgroundMode = 'gradient'; // Default to gradient
+let isRunCommandRunning = false;
 
 // Search functionality state
 let isFindWidgetActive = false; // Renamed from isSearchActive
@@ -92,11 +93,11 @@ let currentPopupContext: {
     fileOptions: FileOption[];
 } = {
     lineNumber: 0,
-    targetElement: null, 
-    fileOptions: [] 
+    targetElement: null,
+    fileOptions: []
 };
 
-// --- Initial Setup --- 
+// --- Initial Setup ---
 
 debugLog("[Webview] Initializing setup..."); // 新增日志
 
@@ -105,7 +106,7 @@ function postMessage(command: string, payload?: any) {
     vscode.postMessage({ command, payload });
 }
 
-// --- Message Handling from Extension --- 
+// --- Message Handling from Extension ---
 
 window.addEventListener('message', event => {
     const message = event.data;
@@ -128,12 +129,12 @@ window.addEventListener('message', event => {
                  console.warn('[Webview] Invalid restoreLogs message:', message);
             }
             break;
-        case 'requestFileSelection': 
+        case 'requestFileSelection':
             debugLog("[Webview] Handling requestFileSelection."); // 新增日志
             if (
-                message.payload && 
-                Array.isArray(message.payload.fileOptions) && 
-                typeof message.payload.lineNumber === 'number' && 
+                message.payload &&
+                Array.isArray(message.payload.fileOptions) &&
+                typeof message.payload.lineNumber === 'number' &&
                 typeof message.payload.linkId === 'string'
             ) {
                  showFileSelectionPopup(message.payload.fileOptions, message.payload.lineNumber, message.payload.linkId);
@@ -154,7 +155,12 @@ window.addEventListener('message', event => {
                      updateCompileMenu();
                      debugLog("[Webview] Initial targetPlatform set to:", targetPlatform);
                  }
-             }
+                 setRunButtonRunning(Boolean(message.payload.runCommandRunning));
+              }
+              break;
+        case 'setRunState':
+             debugLog("[Webview] Handling setRunState.");
+             setRunButtonRunning(Boolean(message.payload?.running));
              break;
         case 'setCompileMenu':
              debugLog("[Webview] Handling setCompileMenu.");
@@ -167,7 +173,7 @@ window.addEventListener('message', event => {
     }
 });
 
-// --- Log Appending and History Restoration --- 
+// --- Log Appending and History Restoration ---
 
 function appendLog(htmlContent: string) {
     if (!logContainer) return;
@@ -233,7 +239,7 @@ function scrollToBottom() {
      });
 }
 
-// --- Event Listeners for User Actions --- 
+// --- Event Listeners for User Actions ---
 
 // Delegated event listener for file links
 logContainer?.addEventListener('click', (e) => {
@@ -244,7 +250,7 @@ logContainer?.addEventListener('click', (e) => {
         const filePath = link.getAttribute('data-file-path');
         const lineNumber = parseInt(link.getAttribute('data-line-number') || '0', 10);
         const linkId = link.id;
-        
+
         if (filePath && !isNaN(lineNumber) && linkId) {
             postMessage('openFile', { filePath, lineNumber, linkId });
         } else {
@@ -257,9 +263,9 @@ logContainer?.addEventListener('click', (e) => {
 function showFileSelectionPopup(fileOptions: FileOption[], lineNumber: number, linkId: string) {
     debugLog("[Webview] Showing file selection popup for link:", linkId); // 新增日志
     const targetElement = document.getElementById(linkId);
-    if (!targetElement || !popup || !popupList) { 
+    if (!targetElement || !popup || !popupList) {
         console.warn('[Webview] Cannot show popup: Missing element.', {targetElement, popup, popupList});
-        return; 
+        return;
     }
 
     currentPopupContext = {
@@ -274,7 +280,7 @@ function showFileSelectionPopup(fileOptions: FileOption[], lineNumber: number, l
         const li = document.createElement('li');
         // Add icon placeholder (styling via CSS)
         const iconSpan = document.createElement('span');
-        iconSpan.className = 'file-icon'; 
+        iconSpan.className = 'file-icon';
         li.appendChild(iconSpan);
         // Add path info container
         const pathInfoSpan = document.createElement('span');
@@ -293,7 +299,7 @@ function showFileSelectionPopup(fileOptions: FileOption[], lineNumber: number, l
             descSpan.title = option.description; // Tooltip for long paths
             pathInfoSpan.appendChild(descSpan);
         }
-        li.appendChild(pathInfoSpan); 
+        li.appendChild(pathInfoSpan);
         li.dataset.fullPath = option.fullPath; // Store full path for selection
         popupList.appendChild(li);
     });
@@ -301,8 +307,8 @@ function showFileSelectionPopup(fileOptions: FileOption[], lineNumber: number, l
     // Position and display the popup (similar logic as before)
     const rect = targetElement.getBoundingClientRect();
     const containerRect = logContainer!.getBoundingClientRect(); // Use non-null assertion as we check logContainer earlier
-    let top = rect.bottom + logContainer!.scrollTop - containerRect.top + 5; 
-    let left = rect.left - containerRect.left; 
+    let top = rect.bottom + logContainer!.scrollTop - containerRect.top + 5;
+    let left = rect.left - containerRect.left;
 
     popup.style.setProperty('--popup-base-left', `${left}px`);
     popup.style.setProperty('--popup-base-top', `${top}px`);
@@ -318,7 +324,7 @@ function showFileSelectionPopup(fileOptions: FileOption[], lineNumber: number, l
              popup.style.left = `${left}px`; // Reset if fits
          }
          if (popupRect.bottom > window.innerHeight) {
-             popup.style.top = `${rect.top + logContainer!.scrollTop - containerRect.top - popupRect.height - 5}px`; 
+             popup.style.top = `${rect.top + logContainer!.scrollTop - containerRect.top - popupRect.height - 5}px`;
          } else {
             popup.style.top = `${top}px`; // Reset if fits
          }
@@ -341,7 +347,7 @@ popupList?.addEventListener('click', (e) => {
     if (listItem && listItem.dataset.fullPath) {
         debugLog("[Webview] File selected from popup:", listItem.dataset.fullPath); // 新增日志
         const selectedPath = listItem.dataset.fullPath;
-        postMessage('fileSelected', { 
+        postMessage('fileSelected', {
             selectedPath: selectedPath,
             lineNumber: currentPopupContext.lineNumber
         });
@@ -369,7 +375,7 @@ document.addEventListener('click', (event) => {
 });
 
 
-// --- Control Button Logic --- 
+// --- Control Button Logic ---
 
 if (lockScrollBtn) {
     const lockIcon = lockScrollBtn.querySelector('.icon') as HTMLElement | null;
@@ -433,6 +439,10 @@ toggleLocationBtn?.addEventListener('click', () => {
 // Run Button Listener (New)
 runBtn?.addEventListener('click', () => {
     debugLog("[Webview] Run button clicked.");
+    if (isRunCommandRunning) {
+        return;
+    }
+
     postMessage('runProject'); // Send message to extension
 });
 
@@ -559,7 +569,7 @@ if (settingsBtn && settingsMenu) {
 // Global click handler to close dropdowns when clicking outside
 document.addEventListener('click', (event) => {
     const target = event.target as HTMLElement;
-    
+
     // Close file selection popup if clicked outside
     if (popup && popup.style.display === 'block') {
         const isClickInsidePopup = popup.contains(target);
@@ -599,6 +609,19 @@ function closeAllDropdowns() {
 
 // --- UI Update Functions ---
 
+function setRunButtonRunning(running: boolean): void {
+    isRunCommandRunning = running;
+
+    const runIcon = runBtn?.querySelector('.icon') as HTMLElement | null;
+    if (!runBtn || !runIcon) {
+        return;
+    }
+
+    runIcon.classList.remove('codicon-run', 'codicon-debug-pause');
+    runIcon.classList.add(running ? 'codicon-debug-pause' : 'codicon-run');
+    runBtn.title = running ? '运行中' : '运行项目 (F5)';
+}
+
 function updateScrollLockButton() {
      if (lockScrollBtn) {
         const lockIcon = lockScrollBtn.querySelector('.icon') as HTMLElement | null;
@@ -637,10 +660,10 @@ function updateBackground() {
     body.classList.add(classToAdd);
 }
 
-// --- Initialization --- 
+// --- Initialization ---
 
 if (popup) {
-    popup.style.display = 'none'; 
+    popup.style.display = 'none';
     debugLog("[Webview] Popup initially hidden."); // 新增日志
 }
 
@@ -649,7 +672,7 @@ updateBackground();
 
 postMessage('webviewReady');
 
-debugLog("[Webview] Script loaded and ready."); 
+debugLog("[Webview] Script loaded and ready.");
 
 // Event Listeners for Find Widget
 searchBtn?.addEventListener('click', () => {
@@ -700,7 +723,7 @@ findPrevBtn?.addEventListener('click', () => {
 
 findNextBtn?.addEventListener('click', () => {
     debugLog("[Webview] Next button clicked");
-    // Add current query to search history when user navigates  
+    // Add current query to search history when user navigates
     if (findInput && findInput.value.trim()) {
         addToSearchHistory(findInput.value.trim());
     }
@@ -728,7 +751,7 @@ findRegexBtn?.addEventListener('click', () => {
 findInSelectionBtn?.addEventListener('click', () => {
     isInSelectionActive = !isInSelectionActive;
     findInSelectionBtn.classList.toggle('active', isInSelectionActive);
-    
+
     if (isInSelectionActive) {
         // Capture current selection when activating
         captureCurrentSelection();
@@ -736,7 +759,7 @@ findInSelectionBtn?.addEventListener('click', () => {
         // Clear selection when deactivating
         clearSelection();
     }
-    
+
     performSearch();
 });
 
@@ -806,7 +829,7 @@ function closeFindWidget() {
     clearSearchHighlights();
     searchMatches = [];
     currentMatchIndex = -1;
-    
+
     // Clear selection state when closing find widget
     if (isInSelectionActive) {
         isInSelectionActive = false;
@@ -815,7 +838,7 @@ function closeFindWidget() {
         }
         clearSelection();
     }
-    
+
     updateSearchResults();
     debugLog("[Webview] Find widget closed.");
 }
@@ -824,17 +847,17 @@ function closeFindWidget() {
 function captureCurrentSelection() {
     selectedElements = [];
     selectedText = '';
-    
+
     const selection = window.getSelection();
     if (!selection || selection.rangeCount === 0) {
         debugLog("[Webview] No text selection found");
         return;
     }
-    
+
     try {
         const range = selection.getRangeAt(0);
         selectedText = range.toString();
-        
+
         // Find all log lines that intersect with the selection
         if (logContainer) {
             const allLogLines = Array.from(logContainer.querySelectorAll('.log-line'));
@@ -842,9 +865,9 @@ function captureCurrentSelection() {
                 return range.intersectsNode(line);
             }) as HTMLElement[];
         }
-        
+
         debugLog(`[Webview] Captured selection: "${selectedText}", ${selectedElements.length} lines`);
-        
+
         // Update button state to show selection is active
         if (findInSelectionBtn && selectedElements.length > 0) {
             findInSelectionBtn.title = `在选定内容中查找 (Alt+L) - ${selectedElements.length} 行被选中`;
@@ -859,11 +882,11 @@ function captureCurrentSelection() {
 function clearSelection() {
     selectedElements = [];
     selectedText = '';
-    
+
     if (findInSelectionBtn) {
         findInSelectionBtn.title = "在选定内容中查找 (Alt+L)";
     }
-    
+
     debugLog("[Webview] Selection cleared");
 }
 
@@ -903,12 +926,12 @@ function performSearch() {
         } else {
             // Literal search mode - escape special regex characters
             finalQuery = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            
+
             // Add word boundary for whole word search
             if (isWholeWord) {
                 finalQuery = `\\b${finalQuery}\\b`;
             }
-            
+
             const flags = isCaseSensitive ? 'g' : 'gi';
             searchPattern = new RegExp(finalQuery, flags);
         }
@@ -925,29 +948,29 @@ function performSearch() {
             logLines = Array.from(logContainer.querySelectorAll('.log-line'));
             debugLog(`[Webview] Searching in all ${logLines.length} lines`);
         }
-        
+
         logLines.forEach((line) => {
             const textContent = line.textContent || '';
             const matches = [...textContent.matchAll(searchPattern)];
-            
+
             if (matches.length > 0) {
                 highlightMatches(line as HTMLElement, matches, searchPattern);
             }
         });
-        
+
         // Collect all highlighted elements
         searchMatches = Array.from(logContainer.querySelectorAll('.search-highlight'));
-        
+
         if (searchMatches.length > 0) {
             currentMatchIndex = 0;
             updateCurrentMatch();
         }
-        
+
         updateSearchResults();
         lastSearchQuery = query;
-        
+
         // Note: addToSearchHistory is now called only when user explicitly searches (Enter key or navigation)
-        
+
     } catch (error) {
         console.error("[Webview] Search error:", error);
         if (findResultsCount) {
@@ -960,36 +983,36 @@ function highlightMatches(element: HTMLElement, matches: RegExpMatchArray[], pat
     const textContent = element.textContent || '';
     const fragments: (string | HTMLElement)[] = [];
     let lastIndex = 0;
-    
+
     // Reset the regex to start from the beginning
     pattern.lastIndex = 0;
     let match;
-    
+
     while ((match = pattern.exec(textContent)) !== null) {
         // Add text before the match
         if (match.index > lastIndex) {
             fragments.push(textContent.slice(lastIndex, match.index));
         }
-        
+
         // Create highlighted span for the match
         const span = document.createElement('span');
         span.className = 'search-highlight';
         span.textContent = match[0];
         fragments.push(span);
-        
+
         lastIndex = match.index + match[0].length;
-        
+
         // Prevent infinite loop for zero-length matches
         if (match[0].length === 0) {
             pattern.lastIndex++;
         }
     }
-    
+
     // Add remaining text
     if (lastIndex < textContent.length) {
         fragments.push(textContent.slice(lastIndex));
     }
-    
+
     // Replace element content with highlighted version
     element.innerHTML = '';
     fragments.forEach(fragment => {
@@ -1003,7 +1026,7 @@ function highlightMatches(element: HTMLElement, matches: RegExpMatchArray[], pat
 
 function clearSearchHighlights() {
     if (!logContainer) return;
-    
+
     const highlights = logContainer.querySelectorAll('.search-highlight');
     highlights.forEach(highlight => {
         const parent = highlight.parentNode;
@@ -1017,12 +1040,12 @@ function clearSearchHighlights() {
 function navigateSearchResult(direction: 'next' | 'prev') {
     debugLog(`[Webview] navigateSearchResult called with direction: ${direction}`);
     debugLog(`[Webview] searchMatches.length: ${searchMatches.length}, currentMatchIndex: ${currentMatchIndex}`);
-    
+
     if (searchMatches.length === 0) {
         debugLog("[Webview] No search matches available");
         return;
     }
-    
+
     // Verify that search matches are still valid (in case DOM was modified)
     const validMatches = searchMatches.filter(match => document.contains(match));
     if (validMatches.length !== searchMatches.length) {
@@ -1039,13 +1062,13 @@ function navigateSearchResult(direction: 'next' | 'prev') {
             currentMatchIndex = searchMatches.length - 1;
         }
     }
-    
+
     // Remove current highlight
     if (currentMatchIndex >= 0 && currentMatchIndex < searchMatches.length) {
         searchMatches[currentMatchIndex].classList.remove('current');
         debugLog(`[Webview] Removed 'current' class from match at index ${currentMatchIndex}`);
     }
-    
+
     // Calculate new index
     const oldIndex = currentMatchIndex;
     if (direction === 'next') {
@@ -1053,37 +1076,37 @@ function navigateSearchResult(direction: 'next' | 'prev') {
     } else {
         currentMatchIndex = currentMatchIndex <= 0 ? searchMatches.length - 1 : currentMatchIndex - 1;
     }
-    
+
     debugLog(`[Webview] Index changed from ${oldIndex} to ${currentMatchIndex}`);
     updateCurrentMatch();
 }
 
 function updateCurrentMatch() {
     debugLog(`[Webview] updateCurrentMatch called, currentMatchIndex: ${currentMatchIndex}, searchMatches.length: ${searchMatches.length}`);
-    
+
     if (currentMatchIndex >= 0 && currentMatchIndex < searchMatches.length) {
         const currentMatch = searchMatches[currentMatchIndex];
         debugLog(`[Webview] Adding 'current' class to match at index ${currentMatchIndex}`);
         debugLog(`[Webview] Current match element:`, currentMatch);
         currentMatch.classList.add('current');
-        
+
         // Scroll to the current match
         debugLog(`[Webview] Scrolling to current match`);
-        currentMatch.scrollIntoView({ 
-            behavior: 'smooth', 
-            block: 'center' 
+        currentMatch.scrollIntoView({
+            behavior: 'smooth',
+            block: 'center'
         });
     } else {
         debugLog(`[Webview] Invalid currentMatchIndex: ${currentMatchIndex} (should be between 0 and ${searchMatches.length - 1})`);
     }
-    
+
     updateSearchResults();
     updateNavigationButtons();
 }
 
 function updateSearchResults() {
     if (!findResultsCount) return;
-    
+
     if (searchMatches.length === 0) {
         if (findInput?.value) {
             // 有搜索词但无匹配结果时显示 0/0
@@ -1101,14 +1124,14 @@ function updateSearchResults() {
 function updateNavigationButtons() {
     const hasMatches = searchMatches.length > 0;
     debugLog(`[Webview] updateNavigationButtons called, hasMatches: ${hasMatches}`);
-    
+
     if (findPrevBtn) {
         findPrevBtn.disabled = !hasMatches;
         debugLog(`[Webview] Previous button disabled: ${!hasMatches}`);
     } else {
         debugLog("[Webview] Previous button not found");
     }
-    
+
     if (findNextBtn) {
         findNextBtn.disabled = !hasMatches;
         debugLog(`[Webview] Next button disabled: ${!hasMatches}`);
@@ -1122,21 +1145,21 @@ function addToSearchHistory(query: string) {
     if (!query.trim() || searchHistory.includes(query)) {
         return;
     }
-    
+
     // Remove existing entry if present (to move it to the end)
     const existingIndex = searchHistory.indexOf(query);
     if (existingIndex !== -1) {
         searchHistory.splice(existingIndex, 1);
     }
-    
+
     // Add to the end
     searchHistory.push(query);
-    
+
     // Limit history size
     if (searchHistory.length > MAX_SEARCH_HISTORY) {
         searchHistory.shift(); // Remove the oldest entry
     }
-    
+
     searchHistoryIndex = searchHistory.length - 1;
     debugLog(`[Webview] Added to search history: "${query}", history length: ${searchHistory.length}`);
 }
@@ -1146,7 +1169,7 @@ function navigateSearchHistory(direction: 'up' | 'down') {
         debugLog("[Webview] No search history available");
         return;
     }
-    
+
     if (direction === 'up') {
         if (searchHistoryIndex > 0) {
             searchHistoryIndex--;
@@ -1160,7 +1183,7 @@ function navigateSearchHistory(direction: 'up' | 'down') {
             searchHistoryIndex = 0; // Wrap to first
         }
     }
-    
+
     const historyQuery = searchHistory[searchHistoryIndex];
     if (findInput && historyQuery) {
         debugLog(`[Webview] Navigating to history item: "${historyQuery}"`);
@@ -1174,7 +1197,7 @@ function showSearchHistoryMenu() {
         debugLog("[Webview] No search history to show");
         return;
     }
-    
+
     // Create a simple dropdown menu for search history
     const menu = document.createElement('div');
     menu.className = 'search-history-menu';
@@ -1189,14 +1212,14 @@ function showSearchHistoryMenu() {
         overflow-y: auto;
         min-width: 200px;
     `;
-    
+
     // Position the menu below the find input
     if (findInput) {
         const inputRect = findInput.getBoundingClientRect();
         menu.style.top = `${inputRect.bottom + 2}px`;
         menu.style.left = `${inputRect.left}px`;
     }
-    
+
     // Add history items
     searchHistory.slice().reverse().forEach((query, index) => {
         const item = document.createElement('div');
@@ -1211,15 +1234,15 @@ function showSearchHistoryMenu() {
             overflow: hidden;
             text-overflow: ellipsis;
         `;
-        
+
         item.addEventListener('mouseenter', () => {
             item.style.backgroundColor = 'var(--vscode-list-hoverBackground)';
         });
-        
+
         item.addEventListener('mouseleave', () => {
             item.style.backgroundColor = 'transparent';
         });
-        
+
         item.addEventListener('click', () => {
             if (findInput) {
                 findInput.value = query;
@@ -1227,10 +1250,10 @@ function showSearchHistoryMenu() {
             }
             document.body.removeChild(menu);
         });
-        
+
         menu.appendChild(item);
     });
-    
+
     // Add clear history option
     if (searchHistory.length > 0) {
         const separator = document.createElement('div');
@@ -1240,7 +1263,7 @@ function showSearchHistoryMenu() {
             margin: 4px 0;
         `;
         menu.appendChild(separator);
-        
+
         const clearItem = document.createElement('div');
         clearItem.className = 'search-history-clear';
         clearItem.textContent = '清空历史记录';
@@ -1251,27 +1274,27 @@ function showSearchHistoryMenu() {
             font-size: 13px;
             font-style: italic;
         `;
-        
+
         clearItem.addEventListener('mouseenter', () => {
             clearItem.style.backgroundColor = 'var(--vscode-list-hoverBackground)';
         });
-        
+
         clearItem.addEventListener('mouseleave', () => {
             clearItem.style.backgroundColor = 'transparent';
         });
-        
+
         clearItem.addEventListener('click', () => {
             searchHistory = [];
             searchHistoryIndex = -1;
             debugLog("[Webview] Search history cleared");
             document.body.removeChild(menu);
         });
-        
+
         menu.appendChild(clearItem);
     }
-    
+
     document.body.appendChild(menu);
-    
+
     // Close menu when clicking outside
     setTimeout(() => {
         const closeMenu = (event: MouseEvent) => {
